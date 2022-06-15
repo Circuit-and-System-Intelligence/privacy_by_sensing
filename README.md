@@ -9,3 +9,8 @@ To use the spec file to install its listed packages into an existing environment
 ```sh
 conda install --name myenv --file spec-file.txt
 ```
+
+Then activate the environment we just created:
+```sh
+conda activate myenv
+```
