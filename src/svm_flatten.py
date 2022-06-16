@@ -1,45 +1,42 @@
 #!/usr/bin/env python3
 
 import torch
-from torch import nn
 from torchvision import datasets, transforms
 import argparse
 from sklearn.svm import LinearSVC
 from sklearn.model_selection import cross_val_score
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import classification_report
+import matplotlib.pyplot as plt
 import numpy as np
 
-# import matplotlib.pyplot as plt
+frequency = np.array(
+    [
+        0.00,
+        997600000.00,
+        2035000000.00,
+        3055000000.00,
+        4051000000.00,
+        5018000000.00,
+        5933000000.00,
+        6863000000.00,
+        7763000000.00,
+        8646000000.00,
+        9484000000.00,
+        10260000000.00,
+        10950000000.00,
+        11720000000.00,
+        12460000000.00,
+        12890000000.00,
+    ]
+)
 
 
-def nonlinearity(x, mode=0):
-    if mode == 0:
-        x = x[0].to(torch.long)
-    freqency = torch.tensor(
-        [
-            0.00,
-            997600000.00,
-            2035000000.00,
-            3055000000.00,
-            4051000000.00,
-            5018000000.00,
-            5933000000.00,
-            6863000000.00,
-            7763000000.00,
-            8646000000.00,
-            9484000000.00,
-            10260000000.00,
-            10950000000.00,
-            11720000000.00,
-            12460000000.00,
-            12890000000.00,
-        ]
-    )
-    out = freqency / (freqency[1] * 15)
-    if mode == 1:
+def nonlinearity(x, frequency):
+    out = frequency / (frequency[1] * 15)
+    if min(x) < 0:
         out_n = -out[1:].flip(0)
-        out = torch.cat((out_n, out))
+        out = np.cat((out_n, out))
         x = x + 15
     return out[x]
 
@@ -89,21 +86,25 @@ def train(model, train_data, train_label, args):
     return model
 
 
-def generate_projection_matrix(k, args):
+def generate_projection_matrix(k, nonlinear_mult=False):
     random_projection_matrix = np.random.normal(0, 1 / np.sqrt(k), size=(28 * 28, k))
+    print("l2 sensitivty", lp_sensitivity(random_projection_matrix, 2))
     random_projection_matrix = (
         np.digitize(random_projection_matrix, np.linspace(-1, 1, 32)) - 16
     )
-    if args.nonlinear_mult:
+    if nonlinear_mult:
         random_projection_matrix = nonlinearity(random_projection_matrix, mode=1)
 
-    l2 = random_projection_matrix ** 2
-
-    l2 = np.sqrt(l2.sum(1))
-
-    print("L2 distance", l2.max())
-
+    random_projection_matrix = random_projection_matrix / 16.0
+    print("l2 sensitivty after digitize", lp_sensitivity(random_projection_matrix, 2))
     return random_projection_matrix
+
+
+def lp_sensitivity(matrix, lp):
+    sensitivity = abs(matrix) ** lp
+    sensitivity = np.sqrt(sensitivity.sum(1))
+    sensitivity = sensitivity.max()
+    return sensitivity
 
 
 def generate_additive_noise(k, sigma, size, args):
@@ -132,9 +133,7 @@ if __name__ == "__main__":
         help="Dimensions after projection",
     )
     parser.add_argument(
-        "--nonlinear_mult",
-        default=False,
-        help="Add nonlinear multiplication effects",
+        "--nonlinear_mult", default=False, help="Add nonlinear multiplication effects",
     )
     args = parser.parse_args()
 
