@@ -32,11 +32,11 @@ frequency = np.array(
 )
 
 
-def nonlinearity(x, frequency):
+def nonlinearity(x, frequency=frequency):
     out = frequency / (frequency[1] * 15)
     if min(x) < 0:
         out_n = -out[1:].flip(0)
-        out = np.cat((out_n, out))
+        out = np.concatenate((out_n, out))
         x = x + 15
     return out[x]
 
@@ -109,6 +109,10 @@ def lp_sensitivity(matrix, lp):
 
 def generate_additive_noise(k, sigma, size, args):
     return np.random.normal(0, sigma, size=(size, k))
+
+
+def minimum_sigma(delta, epsilon, w_2):
+    return w_2 * np.sqrt(2 * (np.log(1 / (2 * delta)) + epsilon)) / epsilon
 
 
 if __name__ == "__main__":
