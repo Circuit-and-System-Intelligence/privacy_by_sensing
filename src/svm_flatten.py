@@ -151,6 +151,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sigma", type=float, default=0.1, help="The amount of additive noise added to test samples",
     )
+    parser.add_argument(
+        "--test_name", help="Name for the result files",
+    )
     args = parser.parse_args()
 
     # Print Arguments
@@ -195,5 +198,6 @@ if __name__ == "__main__":
     score = precision_score(test_label, pred_label, average="macro")
     print(score)
 
-    with open('dimension_results', "a", encoding="utf-8") as f:
+    name = args.test_name + "_results"
+    with open(name, "a", encoding="utf-8") as f:
         f.write(f"{score}\n")
