@@ -1,0 +1,2 @@
+data/MNIST/raw/*-ubyte
+src/__pycache__
