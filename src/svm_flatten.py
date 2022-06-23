@@ -5,44 +5,44 @@ from torchvision import datasets, transforms
 import argparse
 from sklearn.svm import LinearSVC
 from sklearn.model_selection import cross_val_score
-from sklearn.metrics import confusion_matrix
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, confusion_matrix, precision_score
 import matplotlib.pyplot as plt
 import numpy as np
 
-frequency = np.array(
-    [
-        0.00,
-        997600000.00,
-        2035000000.00,
-        3055000000.00,
-        4051000000.00,
-        5018000000.00,
-        5933000000.00,
-        6863000000.00,
-        7763000000.00,
-        8646000000.00,
-        9484000000.00,
-        10260000000.00,
-        10950000000.00,
-        11720000000.00,
-        12460000000.00,
-        12890000000.00,
-    ]
-)
 
-
-def nonlinearity(x, frequency=frequency):
-    out = frequency / (frequency[1] * 15)
-    if min(x) < 0:
-        out_n = -out[1:].flip(0)
+# Transform the array x according
+def nonlinearity(x, frequency):
+    if frequency is None:
+        frequency = np.array(
+            [
+                0.46222,
+                0.58199,
+                0.71311,
+                0.86543,
+                1.02708,
+                1.19686,
+                1.36171,
+                1.54039,
+                1.72681,
+                1.89204,
+                2.05703,
+                2.21486,
+                2.36614,
+                2.52254,
+                2.66734,
+                2.77935,
+            ]
+        )
+    out = frequency / (frequency[0] * 16)
+    if np.min(x) < 0:
+        out_n = np.flip(-out, 0)
         out = np.concatenate((out_n, out))
-        x = x + 15
+        x = x + 16
     return out[x]
 
 
 # Load the training data
-def MNIST_DATASET_TRAIN(train_amount, downloads=False):
+def MNIST_DATASET_TRAIN(train_amount, downloads=False, nonlinear_mult=False):
     training_data = datasets.MNIST(
         "../data", train=True, transform=transforms.ToTensor(), download=downloads
     )
@@ -54,13 +54,17 @@ def MNIST_DATASET_TRAIN(train_amount, downloads=False):
     # plt.imshow(train_data[0])
     # plt.show()
 
-    train_data = train_data / 255.0
+    if nonlinear_mult:
+        train_data = nonlinearity(train_data // 16, None)
+    else:
+        train_data = train_data // 16
+        train_data = train_data / 16
 
     return train_data, train_labels
 
 
 # Load the testing data
-def MNIST_DATASET_TEST(test_amount, downloads=False):
+def MNIST_DATASET_TEST(test_amount, downloads=False, nonlinear_mult=False):
     testing_data = datasets.MNIST(
         "../data", train=False, transform=transforms.ToTensor(), download=downloads
     )
@@ -70,7 +74,11 @@ def MNIST_DATASET_TEST(test_amount, downloads=False):
     print("Testing data size: ", test_data.shape)
     print("Testing data label size: ", test_labels.shape)
 
-    test_data = test_data / 255.0
+    if nonlinear_mult:
+        test_data = nonlinearity(test_data // 16, None)
+    else:
+        test_data = test_data // 16
+        test_data = test_data / 16
 
     return test_data, test_labels
 
@@ -93,9 +101,10 @@ def generate_projection_matrix(k, nonlinear_mult=False):
         np.digitize(random_projection_matrix, np.linspace(-1, 1, 32)) - 16
     )
     if nonlinear_mult:
-        random_projection_matrix = nonlinearity(random_projection_matrix, mode=1)
+        random_projection_matrix = nonlinearity(random_projection_matrix, None)
+    else:
+        random_projection_matrix = random_projection_matrix / 16.0
 
-    random_projection_matrix = random_projection_matrix / 16.0
     print("l2 sensitivty after digitize", lp_sensitivity(random_projection_matrix, 2))
     return random_projection_matrix
 
@@ -107,8 +116,8 @@ def lp_sensitivity(matrix, lp):
     return sensitivity
 
 
-def generate_additive_noise(k, sigma, size, args):
-    return np.random.normal(0, sigma, size=(size, k))
+def generate_additive_noise(k, sigma, samples):
+    return np.random.normal(0, sigma, size=(samples, k))
 
 
 def minimum_sigma(delta, epsilon, w_2):
@@ -139,6 +148,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--nonlinear_mult", default=False, help="Add nonlinear multiplication effects",
     )
+    parser.add_argument(
+        "--sigma", type=float, default=0.1, help="The amount of additive noise added to test samples",
+    )
     args = parser.parse_args()
 
     # Print Arguments
@@ -157,9 +169,13 @@ if __name__ == "__main__":
     train_features = train_data.reshape(args.train_amount, -1)
     test_features = test_data.reshape(args.test_amount, -1)
 
-    rnd_matrix = generate_projection_matrix(args.projection_dimension, args)
+    rnd_matrix = generate_projection_matrix(
+        args.projection_dimension, args.nonlinear_mult
+    )
     train_features = np.matmul(train_features, rnd_matrix)
     test_features = np.matmul(test_features, rnd_matrix)
+    noise_matrix = generate_additive_noise(args.projection_dimension, args.sigma, args.test_amount)
+    test_features = test_features + noise_matrix
 
     # Train SVM
     print("-----Training SVM-----")
@@ -175,3 +191,9 @@ if __name__ == "__main__":
 
     cr = classification_report(test_label, pred_label)
     print(cr)
+
+    score = precision_score(test_label, pred_label, average="macro")
+    print(score)
+
+    with open('dimension_results', "a", encoding="utf-8") as f:
+        f.write(f"{score}\n")

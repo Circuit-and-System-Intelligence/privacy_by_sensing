@@ -1,2 +1,4 @@
 data/MNIST/raw/*-ubyte
 src/__pycache__
+/src/*.log
+/src/*_results
