@@ -1,183 +1,227 @@
+#!/usr/bin/env python3
+
 import torch
 from torchvision import datasets, transforms
-import gram_schmidt as gs
-import numpy as np
-from sklearn.datasets import fetch_openml
-import matplotlib.pyplot as plt
-from sklearn import metrics
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
+import argparse
 from sklearn.cluster import KMeans
-from sklearn import preprocessing
-from scipy.spatial.distance import pdist
-import seaborn as sns
+from sklearn.model_selection import cross_val_score
+from sklearn import metrics
+import matplotlib.pyplot as plt
+import numpy as np
 
 
-def nonlinearity(x, mode=0):
-    freqency = np.array(
-        [
-            0.00,
-            997600000.00,
-            2035000000.00,
-            3055000000.00,
-            4051000000.00,
-            5018000000.00,
-            5933000000.00,
-            6863000000.00,
-            7763000000.00,
-            8646000000.00,
-            9484000000.00,
-            10260000000.00,
-            10950000000.00,
-            11720000000.00,
-            12460000000.00,
-            12890000000.00,
-        ]
-    )
-    out = freqency / freqency[1]*15
-    if mode == 1:
-        out_n = np.flip(-out[1:], 0)
+# Transform the array x according
+def nonlinearity(x, frequency):
+    if frequency is None:
+        frequency = np.array(
+            [
+                0.46222,
+                0.58199,
+                0.71311,
+                0.86543,
+                1.02708,
+                1.19686,
+                1.36171,
+                1.54039,
+                1.72681,
+                1.89204,
+                2.05703,
+                2.21486,
+                2.36614,
+                2.52254,
+                2.66734,
+                2.77935,
+            ]
+        )
+    out = frequency / (frequency[0] * 16)
+    if np.min(x) < 0:
+        out_n = np.flip(-out, 0)
         out = np.concatenate((out_n, out))
-        x = x + 15
+        x = x + 16
     return out[x]
 
 
-def run(k, epsilon, data, labels):
-    RP = np.random.normal(0, 1 / np.sqrt(k), size=(28 * 28, k))
-
-    RP = np.digitize(RP, np.linspace(-1, 1, 32)) - 16
-    # RP = RP / 16.0
-
-    RP = nonlinearity(RP, mode=1)
-
-    l2 = RP ** 2
-
-    l2 = np.sqrt(l2.sum(1)).max()
-
-    delta = 0.1
-
-    subindices = (
-        (labels.to_numpy(dtype=np.uint8) == 0) + (labels.to_numpy(dtype=np.uint8) == 1)
-    ).nonzero()[0]
-    data = data.to_numpy(dtype=np.uint8)[subindices]
-    min_max_scaler = preprocessing.MinMaxScaler()
-    data = min_max_scaler.fit_transform(data)
-    data = np.digitize(data, np.linspace(0, 1, 16)) - 1
-    data = nonlinearity(data)
-    labels = labels.to_numpy(dtype=np.uint8)[subindices]
-    split = int(0.85 * len(labels))
-    train_data = data[0:split]
-    test_data = data[split:-1]
-
-    dista = pdist(train_data)
-    dista = dista[dista.nonzero()]
-    a1 = np.mean(dista) ** 2
-    sigma = (l2 / np.mean(dista)) * np.sqrt(np.log(1 / delta)) / epsilon
-    print("sigma", sigma)
-    train_data = np.matmul(train_data.reshape((split, 28 * 28)), RP)
-    train_data = train_data.reshape((split, k))
-    distb = pdist(train_data)
-    distb = distb[distb.nonzero()]
-    a2 = np.mean(distb) ** 2
-    l2error = ((a1 - a2) ** 2) / (a1 ** 2)
-    print("l2error", l2error)
-    test_data = np.matmul(test_data.reshape((len(labels) - split - 1, 28 * 28)), RP)
-    test_data = test_data.reshape((len(labels) - split - 1, k))
-    AN = np.random.normal(0, sigma, size=(len(labels) - split - 1, k))
-    test_data = test_data + AN
-    n_digits = np.unique(labels).size
-    train_labels = labels[0:split]
-    test_labels = labels[split:-1]
-    kmeans = KMeans(init="k-means++", n_clusters=n_digits, n_init=4, random_state=0)
-    bench_result = bench_k_means(
-        kmeans=kmeans,
-        name="k-means++",
-        train_data=train_data,
-        train_labels=train_labels,
-        test_data=test_data,
-        test_labels=test_labels,
+# Load the training data
+def MNIST_DATASET_TRAIN(train_amount, downloads=False, nonlinear_mult=False):
+    training_data = datasets.MNIST(
+        "../data", train=True, transform=transforms.ToTensor(), download=downloads
     )
 
-    with open("kmeans.csv", "ab") as f:
-        np.savetxt(f, [sigma, l2error, *bench_result], newline=", ", fmt="%.2f")
-        f.write(b"\n")
+    train_data = training_data.data.numpy()[:train_amount]
+    train_labels = training_data.targets.numpy()[:train_amount]
+    # plt.imshow(train_data[0])
+    # plt.show()
 
-    return [sigma, l2error, *bench_result]
+    if nonlinear_mult:
+        train_data = nonlinearity(train_data // 16, None)
+    else:
+        train_data = train_data // 16
+        train_data = train_data / 16
+
+    return train_data, train_labels
 
 
-def bench_k_means(kmeans, name, train_data, train_labels, test_data, test_labels):
-    """Benchmark to evaluate the KMeans initialization methods.
-
-    Parameters
-    ----------
-    kmeans : KMeans instance
-        A :class:`~sklearn.cluster.KMeans` instance with the initialization
-        already set.
-    name : str
-        Name given to the strategy. It will be used to show the results in a
-        table.
-    data : ndarray of shape (n_samples, n_features)
-        The data to cluster.
-    labels : ndarray of shape (n_samples,)
-        The labels used to compute the clustering metrics which requires some
-        supervision.
-    """
-    estimator = make_pipeline(StandardScaler(), kmeans).fit(train_data)
-    results = [name, estimator[-1].inertia_]
-
-    # Define the metrics which require only the true labels and estimator
-    # labels
-    clustering_metrics = [
-        metrics.homogeneity_score,
-        metrics.completeness_score,
-        metrics.v_measure_score,
-        metrics.adjusted_rand_score,
-        metrics.adjusted_mutual_info_score,
-    ]
-    results += [m(train_labels, estimator[-1].labels_) for m in clustering_metrics]
-
-    # The silhouette score requires the full dataset
-    results += [
-        metrics.silhouette_score(
-            train_data, estimator[-1].labels_, metric="euclidean", sample_size=300,
-        )
-    ]
-
-    same = 0
-    diff = 0
-    predicted = estimator.predict(test_data)
-    for i in range(len(test_labels)):
-        if test_labels[i] == predicted[i]:
-            same = same + 1
-        else:
-            diff = diff + 1
-
-    correct = same if same > diff else diff
-
-    accuracy = correct / len(test_labels)
-
-    results += [accuracy]
-
-    # Show the results
-    formatter_result = (
-        "{:9s}\t{:.0f}\t{:.3f}\t{:.3f}\t{:.3f}\t{:.3f}\t{:.3f}\t{:.3f}\t\t{:.3f}"
+# Load the testing data
+def MNIST_DATASET_TEST(test_amount, downloads=False, nonlinear_mult=False):
+    testing_data = datasets.MNIST(
+        "../data", train=False, transform=transforms.ToTensor(), download=downloads
     )
-    # print(formatter_result.format(*results))
-    print("homogeneity", results[2])
-    print("completeness", results[3])
-    print("silhouette", results[7])
-    print("accuracy", accuracy)
-    return [results[2], results[3], results[7], accuracy]
+
+    test_data = testing_data.data.numpy()[:test_amount]
+    test_labels = testing_data.targets.numpy()[:test_amount]
+
+    if nonlinear_mult:
+        test_data = nonlinearity(test_data // 16, None)
+    else:
+        test_data = test_data // 16
+        test_data = test_data / 16
+
+    return test_data, test_labels
+
+
+def generate_projection_matrix(k, nonlinear_mult=False):
+    random_projection_matrix = np.random.normal(0, 1 / np.sqrt(k), size=(28 * 28, k))
+    print("l2 sensitivty", lp_sensitivity(random_projection_matrix, 2))
+    random_projection_matrix = (
+        np.digitize(random_projection_matrix, np.linspace(-1, 1, 32)) - 16
+    )
+    if nonlinear_mult:
+        random_projection_matrix = nonlinearity(random_projection_matrix, None)
+    else:
+        random_projection_matrix = random_projection_matrix / 16.0
+
+    print("l2 sensitivty after digitize", lp_sensitivity(random_projection_matrix, 2))
+    return random_projection_matrix
+
+
+def train(model, train_data, train_label, args):
+    model.fit(train_data)
+    print("Homogeneity: %0.3f" % metrics.homogeneity_score(train_label, model.labels_))
+    print(
+        "Completeness: %0.3f" % metrics.completeness_score(train_label, model.labels_)
+    )
+    print("V-measure: %0.3f" % metrics.v_measure_score(train_label, model.labels_))
+    print(
+        "Adjusted Rand-Index: %.3f"
+        % metrics.adjusted_rand_score(train_label, model.labels_)
+    )
+    print(
+        "Silhouette Coefficient: %0.3f"
+        % metrics.silhouette_score(train_data, model.labels_, sample_size=1000)
+    )
+    return model
+
+
+def lp_sensitivity(matrix, lp):
+    sensitivity = abs(matrix) ** lp
+    sensitivity = np.sqrt(sensitivity.sum(1))
+    sensitivity = sensitivity.max()
+    return sensitivity
+
+
+def generate_additive_noise(k, sigma, samples):
+    return np.random.normal(0, sigma, size=(samples, k))
+
+
+def minimum_sigma(delta, epsilon, w_2):
+    return w_2 * np.sqrt(2 * (np.log(1 / (2 * delta)) + epsilon)) / epsilon
 
 
 if __name__ == "__main__":
-    data, labels = fetch_openml(name="mnist_784", return_X_y=True, cache=True)
-    results = []
-    for k in [40, 60, 80, 100, 120, 140, 160]:
-        for e in [0.2, 0.4, 0.6, 0.8, 1]:
-            for i in range(200):
-                print("k", k, "e", e)
-                measure = run(k, e, data, labels)
-                results.append([k, e, measure])
+    # Training Arguments Settings
+    parser = argparse.ArgumentParser(description="SVM")
+    parser.add_argument(
+        "--download_MNIST",
+        default=True,
+        metavar="DL",
+        help="Download MNIST (default: True)",
+    )
+    parser.add_argument(
+        "--train_amount", type=int, default=60000, help="Amount of training samples"
+    )
+    parser.add_argument(
+        "--test_amount", type=int, default=2000, help="Amount of testing samples"
+    )
+    parser.add_argument(
+        "--projection_dimension",
+        type=int,
+        default=80,
+        help="Dimensions after projection",
+    )
+    parser.add_argument(
+        "--nonlinear_mult", default=False, help="Add nonlinear multiplication effects",
+    )
+    parser.add_argument(
+        "--sigma",
+        type=float,
+        default=0.1,
+        help="The amount of additive noise added to test samples",
+    )
+    parser.add_argument(
+        "--test_name", help="Name for the result files",
+    )
+    args = parser.parse_args()
 
-    print(results)
+    # Print Arguments
+    print("\n----------Argument Values-----------")
+    for name, value in vars(args).items():
+        print("%s: %s" % (str(name), str(value)))
+    print("------------------------------------\n")
+
+    train_data, train_label = MNIST_DATASET_TRAIN(
+        args.train_amount, downloads=args.download_MNIST
+    )
+    test_data, test_label = MNIST_DATASET_TEST(
+        args.test_amount, downloads=args.download_MNIST
+    )
+    train_indices = np.logical_or(train_label == 0, train_label == 1)
+    test_indices = np.logical_or(test_label == 0, test_label == 1)
+
+    train_amount = np.sum(train_indices)
+    test_amount = np.sum(test_indices)
+
+    train_data, train_label = train_data[train_indices], train_label[train_indices]
+    test_data, test_label = test_data[test_indices], test_label[test_indices]
+    print("Training data size: ", train_data.shape)
+    print("Training data label size: ", train_label.shape)
+    print("Testing data size: ", test_data.shape)
+    print("Testing data label size: ", test_label.shape)
+
+    train_features = train_data.reshape(train_amount, -1)
+    test_features = test_data.reshape(test_amount, -1)
+
+    rnd_matrix = generate_projection_matrix(
+        args.projection_dimension, args.nonlinear_mult
+    )
+    train_features = np.matmul(train_features, rnd_matrix)
+    test_features = np.matmul(test_features, rnd_matrix)
+    noise_matrix = generate_additive_noise(
+        args.projection_dimension, args.sigma, test_amount
+    )
+    test_features = test_features + noise_matrix
+
+    # Train SVM
+    print("-----Training SVM-----")
+    kmeans = KMeans(n_clusters=2, init="k-means++", n_init=10)
+
+    kmeans = train(kmeans, train_features, train_label, args)
+
+    print("-----Testing SVM------")
+    pred_label = kmeans.predict(test_features)
+    print("Homogeneity: %0.3f" % metrics.homogeneity_score(test_label, pred_label))
+    print(
+        "Completeness: %0.3f" % metrics.completeness_score(test_label, pred_label)
+    )
+    print("V-measure: %0.3f" % metrics.v_measure_score(test_label, pred_label))
+    print(
+        "Adjusted Rand-Index: %.3f"
+        % metrics.adjusted_rand_score(test_label, pred_label)
+    )
+    print(
+        "Silhouette Coefficient: %0.3f"
+        % metrics.silhouette_score(test_features, pred_label, sample_size=1000)
+    )
+
+    name = args.test_name + "_results"
+    with open(name, "a", encoding="utf-8") as f:
+        f.write(f"{metrics.adjusted_rand_score(test_label, pred_label)}\n")
